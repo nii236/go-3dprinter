@@ -61,16 +61,21 @@ func main() {
 				Aliases: []string{"p"},
 				Usage:   "Print a gcode file",
 				Action: func(c *cli.Context) error {
+					fmt.Println("serial port:", c.String("serial-port"))
+					fmt.Println("input file:", c.String("input-file"))
 					mode := &serial.Mode{BaudRate: 115200}
+					fmt.Println("open serial port")
 					s, err := serial.Open(c.String("serial-port"), mode)
 					if err != nil {
 						return err
 					}
+					fmt.Println("open file")
 					f, err := os.Open(c.String("input-file"))
 					if err != nil {
 						return terror.New(err, "")
 					}
-
+					defer f.Close()
+					fmt.Println("print file")
 					return print(s, f)
 				},
 			}, {
@@ -151,12 +156,13 @@ func main() {
 }
 
 func print(s serial.Port, f io.Reader) error {
+	fmt.Println("Start print")
 
 	gfile, err := gcode.ParseFile(f)
 	if err != nil {
 		return terror.New(err, "")
 	}
-
+	fmt.Println("Start sending gcode")
 	for _, l := range gfile.Lines {
 		if strings.HasPrefix(l.String(), ";") {
 			continue
