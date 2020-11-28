@@ -1,19 +1,35 @@
 package messages
 
-// Command the agent
-type Command struct {
-	Type    string
-	Payload []byte
+// AsyncCommand does not require a response
+type AsyncCommand struct {
+	RequestID string
+	Type      CommandType
+	Payload   []byte
 }
 
-// TypeLevelBedTest sends the level bed command
-const TypeLevelBedTest = "LEVEL_BED"
+// CommandType are just enumerated values to know what to do with the message
+type CommandType string
 
-// TypeAutoHome sends the auto home command
-const TypeAutoHome = "AUTO_HOME"
+// AgentStatus sends the agent printer struct
+const AgentStatus CommandType = "AGENT_STATUS"
 
-// TypePrintLink sends the print command
-const TypePrintLink = "PRINT_LINK"
+// LevelBedTest sends the level bed command
+const LevelBedTest CommandType = "LEVEL_BED"
 
-// TypeUnlockPrinter unlocks the printer
-const TypeUnlockPrinter = "UNLOCK_PRINTER"
+// AutoHome sends the auto home command
+const AutoHome CommandType = "AUTO_HOME"
+
+// UnlockPrinter unlocks the printer
+const UnlockPrinter CommandType = "UNLOCK_PRINTER"
+
+// CommandLoad will tell the printer to load
+const CommandLoad CommandType = "COMMAND_LOAD"
+
+// CommandPrint will tell the printer to print
+const CommandPrint CommandType = "COMMAND_PRINT"
+
+// CommandPause will tell the printer to pause
+const CommandPause CommandType = "COMMAND_PAUSE"
+
+// CommandCancel will tell the printer to cancel
+const CommandCancel CommandType = "COMMAND_CANCEL"

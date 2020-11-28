@@ -1,0 +1,16 @@
+output = "."
+pkgname = "db"
+no-context = true
+no-tests = true
+add-global-variants = true
+wipe = true
+
+[psql]
+  dbname = "goprint"
+  host   = "localhost"
+  port   = 5432
+  user   = "goprint"
+  pass   = "dev"
+  schema = "public"
+  blacklist = ["migrations", "other"]
+  sslmode = "disable"

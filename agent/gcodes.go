@@ -1,4 +1,4 @@
-package main
+package agent
 
 // GCodeAutoHome is the script for testing and autohoming
 const GCodeAutoHome = `M201 X500 Y500 Z100 E5000 ; sets maximum accelerations, mm/sec^2
