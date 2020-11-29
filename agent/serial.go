@@ -86,5 +86,6 @@ func print(ctx context.Context, s serial.Port, f io.Reader) error {
 			}
 		}
 	}
+	fmt.Println("Send GCode complete")
 	return nil
 }

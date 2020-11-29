@@ -1,4 +1,6 @@
 import * as React from "react"
+import { useCallback } from "react"
+import { useDropzone } from "react-dropzone"
 import MoreVertIcon from "@material-ui/icons/MoreVert"
 import FavoriteIcon from "@material-ui/icons/Favorite"
 import ShareIcon from "@material-ui/icons/Share"
@@ -12,7 +14,7 @@ import { DropzoneArea } from "material-ui-dropzone"
 import { Button, Card, CardActions, CardContent, CardHeader, Divider, IconButton, List, ListItem, Menu, MenuItem, Paper } from "@material-ui/core"
 import { Action, useMutation, useQuery } from "react-fetching-library"
 import { createClient, ClientContextProvider } from "react-fetching-library"
-import { Pause, Printer, StopCircle } from "react-feather"
+import { Frown, Pause, Printer, StopCircle } from "react-feather"
 import { Refresh } from "@material-ui/icons"
 import { useInterval } from "react-use"
 
@@ -28,21 +30,23 @@ function App() {
 	const [sessionId, setSession] = React.useState<string | undefined>()
 	return (
 		<ClientContextProvider client={client}>
-			<Box margin={4}>
-				<Container maxWidth="sm">
-					<Box display={"flex"} flexDirection={"column"}>
-						<Box margin={2}>
-							<ControlPanel sessionId={sessionId} />
-						</Box>
-						<Box margin={2}>
-							<Sessions setSession={setSession} />
-						</Box>
-						<Box margin={2}>
-							<Files sessionId={sessionId} />
-						</Box>
+			<Container maxWidth="sm">
+				<Box display={"flex"} flexDirection={"column"}>
+					<Box margin={2}>
+						<Sessions setSession={setSession} />
 					</Box>
-				</Container>
-			</Box>
+					{sessionId && (
+						<>
+							<Box margin={2}>
+								<ControlPanel sessionId={sessionId} />
+							</Box>
+							<Box margin={2}>
+								<Files sessionId={sessionId} />
+							</Box>
+						</>
+					)}
+				</Box>
+			</Container>
 		</ClientContextProvider>
 	)
 }
@@ -59,16 +63,10 @@ const ControlPanel = (props: ControlPanelProps) => {
 	const { mutate: cancelPrint } = useMutation<APIResponse<string>, {}, { sessionId: string }>(cancelPrintRequester)
 	const { mutate: autoHome } = useMutation<APIResponse<string>, {}, { sessionId: string }>(autoHomeRequester)
 	const { mutate: printLevelTest } = useMutation<APIResponse<string>, {}, { sessionId: string }>(printLevelTestRequester)
-	const { loading, payload: printerInfoResponse, query: queryPrinterInfo, error, errorObject } = useQuery<APIResponse<PrinterInfo>>(
-		{ endpoint: "/api/printer/info", method: "GET", responseType: "json" },
+	const { loading, payload: printerInfo, query: updatePrinterInfo, error, errorObject } = useQuery<APIResponse<PrinterInfo>>(
+		{ endpoint: `/api/printer/info?session_id=${props.sessionId}`, method: "GET", responseType: "json" },
 		true
 	)
-	const [printerInfo, setPrinterInfo] = React.useState<PrinterInfo>()
-	setInterval(() => {
-		queryPrinterInfo()
-		setPrinterInfo(printerInfoResponse?.payload)
-	}, 5000)
-
 	if (loading) {
 		return <Skeleton variant="text" />
 	}
@@ -79,7 +77,7 @@ const ControlPanel = (props: ControlPanelProps) => {
 		setAnchorEl(event.currentTarget)
 	}
 	if (err && props.sessionId) setErr(null)
-	const busyText = printerInfo?.busy ? `Printer is currently busy` : `Printer is currently not busy`
+	const busyText = printerInfo?.payload.busy ? `Printer is currently busy` : `Printer is currently not busy`
 	return (
 		<Card>
 			<Menu keepMounted open={Boolean(anchorEl)} anchorEl={anchorEl} onClose={() => setAnchorEl(null)}>
@@ -138,9 +136,6 @@ const ControlPanel = (props: ControlPanelProps) => {
 						<Typography variant="body2" color="textSecondary" component="p">
 							Status: {printerInfo?.payload.status}
 						</Typography>
-						<Typography variant="body2" color="textSecondary" component="p">
-							{busyText}
-						</Typography>
 					</ListItem>
 				</List>
 			</CardContent>
@@ -180,6 +175,14 @@ const ControlPanel = (props: ControlPanelProps) => {
 					}}
 				>
 					<StopCircle />
+				</IconButton>
+				<IconButton
+					aria-label="refresh"
+					onClick={() => {
+						updatePrinterInfo()
+					}}
+				>
+					<Refresh />
 				</IconButton>
 			</CardActions>
 		</Card>
@@ -244,17 +247,6 @@ const Sessions = (props: SessionsProps) => {
 				}
 			/>
 			<CardContent>
-				<Button
-					onClick={async () => {
-						try {
-							await query()
-						} catch (err) {
-							console.error(err)
-						}
-					}}
-				>
-					Refresh
-				</Button>
 				{error && <Alert severity="error">{errorObject}</Alert>}
 
 				<List>
@@ -310,17 +302,6 @@ const Files = (props: FilesProps) => {
 				}
 			/>
 			<CardContent>
-				<Button
-					onClick={async () => {
-						try {
-							await query()
-						} catch (err) {
-							console.error(err)
-						}
-					}}
-				>
-					Refresh
-				</Button>
 				{error && <Alert severity="error">{errorObject}</Alert>}
 				{err && <Alert severity="error">{err}</Alert>}
 				<List>
@@ -345,10 +326,29 @@ const Files = (props: FilesProps) => {
 						)
 					})}
 				</List>
-				<DropzoneArea onChange={() => {}} />
+				<Dropzone />
 			</CardContent>
 		</Card>
 	)
 }
+const Dropzone = () => {
+	const onDrop = useCallback((acceptedFiles) => {
+		const formData = new FormData()
+		for (const name in acceptedFiles) {
+			formData.append("file", acceptedFiles[name])
+		}
+		fetch("/api/gcodes/upload", {
+			method: "POST",
+			body: formData,
+		})
+	}, [])
+	const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop })
 
+	return (
+		<div {...getRootProps()}>
+			<input {...getInputProps()} />
+			{isDragActive ? <p>Drop the files here ...</p> : <p>Drag 'n' drop some files here, or click to select files</p>}
+		</div>
+	)
+}
 export default App

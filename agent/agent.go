@@ -1,12 +1,15 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"go-3dprint/messages"
 	"io"
+	"io/ioutil"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -29,10 +32,11 @@ func init() {
 
 // Agent holds state of the printer
 type Agent struct {
-	Conn   *websocket.Conn
-	Serial serial.Port
-	Busy   bool                 // No print commands allowed
-	Status messages.AgentStatus // What printer is currently doing
+	Conn       *websocket.Conn
+	Serial     serial.Port
+	LoadedFile []byte
+	Busy       bool                 // No print commands allowed
+	Status     messages.AgentStatus // What printer is currently doing
 	*sync.Mutex
 	WebsocketHost string
 	WebsocketPort string
@@ -43,6 +47,7 @@ func New(ctx context.Context, serialConn serial.Port, wsConn *websocket.Conn, ws
 	a := &Agent{
 		wsConn,
 		serialConn,
+		[]byte{},
 		false,
 		messages.StatusIdle,
 		&sync.Mutex{},
@@ -93,27 +98,49 @@ func (a *Agent) Subscribe(ctx context.Context) {
 		err := wsjson.Read(ctx, a.Conn, result)
 		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
 			fmt.Println("websocket closed")
-			continue
+			return
 		}
 		if err != nil {
 			fmt.Println(err)
-			continue
+			return
 		}
-		fmt.Println(result)
+		switch result.RequestType {
+		case messages.CommandLoad:
+			fmt.Println("AGENT LOAD RECEIVED ")
+			payload := &messages.PayloadLoadFile{}
+			err = json.Unmarshal(result.Payload, payload)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			resp, err := http.Get(payload.URL)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			if resp.StatusCode != 200 {
+				fmt.Println("non 200 code:", resp.StatusCode)
+				continue
+			}
+			b, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			log.Infow("Downloaded gcode", "bytes", len(a.LoadedFile), "url", payload.URL)
+			a.LoadedFile = b
+			a.Status = messages.StatusReady
 
-		// result := &messages.AsyncCommand{}
-		// err := wsjson.Read(ctx, a.Conn, result)
-		// if err != nil {
-		// 	terror.Echo(err)
-		// 	log.Info("reconnecting...")
-		// 	err = a.Reconnect(ctx)
-		// 	if err != nil {
-		// 		terror.Echo(err)
-		// 		continue
-		// 	}
-		// }
-		// log.Info("RECV:", result)
-		// go a.ProcessMessage(result)
+		case messages.CommandStart:
+			fmt.Println("AGENT START RECEIVED")
+			log.Infow("Loaded gcode", "bytes", len(a.LoadedFile))
+			err = print(ctx, a.Serial, bytes.NewReader(a.LoadedFile))
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+		}
+
 	}
 }
 

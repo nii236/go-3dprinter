@@ -77,36 +77,12 @@ func main() {
 				Aliases: []string{"d"},
 				Usage:   "Dev defaults",
 				Flags: []cli.Flag{
-					&cli.StringFlag{
-						Name:    "addr",
-						Usage:   "Addr to host",
-						EnvVars: []string{"SERVER_ADDR"},
-						Value:   ":8080",
-					},
-					&cli.StringFlag{
-						Name:    "websocket_host",
-						Usage:   "Set the websocket host",
-						EnvVars: []string{"WEBSOCKET_HOST"},
-						Value:   "localhost",
-					},
-					&cli.StringFlag{
-						Name:    "websocket_port",
-						Usage:   "Set the websocket port",
-						EnvVars: []string{"WEBSOCKET_PORT"},
-						Value:   "8080",
-					},
-					&cli.IntFlag{
-						Name:    "baud_rate",
-						Usage:   "Set the baud rate",
-						EnvVars: []string{"BAUD_RATE"},
-						Value:   115200,
-					},
-					&cli.StringFlag{
-						Name:     "serial_device",
-						Usage:    "Set the serial port",
-						EnvVars:  []string{"SERIAL_PORT"},
-						Required: true,
-					},
+					&cli.StringFlag{Name: "server_host", Usage: "Location of the master server", EnvVars: []string{"SERVER_HOST"}, Value: "http://localhost:8080"},
+					&cli.StringFlag{Name: "addr", Usage: "Addr to host", EnvVars: []string{"SERVER_ADDR"}, Value: ":8080"},
+					&cli.StringFlag{Name: "websocket_host", Usage: "Set the websocket host", EnvVars: []string{"WEBSOCKET_HOST"}, Value: "localhost"},
+					&cli.StringFlag{Name: "websocket_port", Usage: "Set the websocket port", EnvVars: []string{"WEBSOCKET_PORT"}, Value: "8080"},
+					&cli.IntFlag{Name: "baud_rate", Usage: "Set the baud rate", EnvVars: []string{"BAUD_RATE"}, Value: 115200},
+					&cli.StringFlag{Name: "serial_device", Usage: "Set the serial port", EnvVars: []string{"SERIAL_PORT"}, Required: true},
 					&cli.StringFlag{Name: "database_user", Value: "goprint", EnvVars: []string{"GOPRINT_DATABASE_USER"}, Usage: "The database user"},
 					&cli.StringFlag{Name: "database_pass", Value: "dev", EnvVars: []string{"GOPRINT_DATABASE_PASS"}, Usage: "The database pass"},
 					&cli.StringFlag{Name: "database_host", Value: "localhost", EnvVars: []string{"GOPRINT_DATABASE_HOST"}, Usage: "The database host"},
@@ -134,6 +110,7 @@ func main() {
 					return devCommand(
 						c.Context,
 						c.String(("addr")),
+						c.String("server_host"),
 						c.Int("baud_rate"),
 						c.String("serial_device"),
 						c.String("websocket_host"),
@@ -146,12 +123,8 @@ func main() {
 				Aliases: []string{"s"},
 				Usage:   "Server",
 				Flags: []cli.Flag{
-					&cli.StringFlag{
-						Name:    "addr",
-						Usage:   "Addr to host",
-						EnvVars: []string{"SERVER_ADDR"},
-						Value:   ":8080",
-					},
+					&cli.StringFlag{Name: "server_host", Usage: "Location of the master server", EnvVars: []string{"SERVER_HOST"}, Value: "http://localhost:8080"},
+					&cli.StringFlag{Name: "addr", Usage: "Addr to host", EnvVars: []string{"SERVER_ADDR"}, Value: ":8080"},
 					&cli.StringFlag{Name: "database_user", Value: "goprint", EnvVars: []string{"GOPRINT_DATABASE_USER"}, Usage: "The database user"},
 					&cli.StringFlag{Name: "database_pass", Value: "dev", EnvVars: []string{"GOPRINT_DATABASE_PASS"}, Usage: "The database pass"},
 					&cli.StringFlag{Name: "database_host", Value: "localhost", EnvVars: []string{"GOPRINT_DATABASE_HOST"}, Usage: "The database host"},
@@ -176,7 +149,7 @@ func main() {
 					}
 					boil.SetDB(conn)
 
-					return serveCommand(c.Context, c.String(("addr")))
+					return serveCommand(c.Context, c.String("addr"), c.String("server_host"))
 				},
 			},
 			{
@@ -260,15 +233,15 @@ func agentCommand(ctx context.Context, baudRate int, serialDevice, websocketHost
 		retry.DelayType(retry.FixedDelay),
 	)
 }
-func serveCommand(ctx context.Context, addr string) error {
-	r := server.Routes()
+func serveCommand(ctx context.Context, addr, serverHost string) error {
+	r := server.Routes(serverHost)
 	return http.ListenAndServe(addr, r)
 }
-func devCommand(ctx context.Context, addr string, baudRate int, serialDevice, websocketHost, websocketPort string) error {
+func devCommand(ctx context.Context, addr, serverHost string, baudRate int, serialDevice, websocketHost, websocketPort string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	g := &run.Group{}
 	g.Add(func() error {
-		return serveCommand(ctx, addr)
+		return serveCommand(ctx, addr, serverHost)
 	}, func(error) {
 		cancel()
 	})

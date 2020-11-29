@@ -9,6 +9,7 @@ import (
 	"go-3dprint/messages"
 	"io/ioutil"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -34,6 +35,7 @@ func init() {
 
 // Controller holds routes and channels
 type Controller struct {
+	Host       string
 	Aggregator chan *messages.AsyncCommand
 	Sessions   map[string]*Session
 	*sync.Mutex
@@ -47,8 +49,9 @@ type Session struct {
 }
 
 // Routes for the master server
-func Routes() chi.Router {
+func Routes(serverHost string) chi.Router {
 	c := &Controller{
+		Host:     serverHost,
 		Sessions: map[string]*Session{},
 		Mutex:    &sync.Mutex{},
 	}
@@ -79,6 +82,7 @@ func Routes() chi.Router {
 
 		r.Get("/gcodes", WithError(c.gcodesList))
 		r.Post("/gcodes/upload", WithError(c.gcodesUpload))
+		r.Get("/gcodes/download", WithError(c.gcodesDownload))
 	})
 
 	return r
@@ -126,8 +130,8 @@ func (c *Controller) printerSessions(w http.ResponseWriter, r *http.Request) (in
 
 // LoadCommand instructs printer on session ID to download file ID into memory
 type LoadCommand struct {
-	SessionID string `json:"sessionId"`
-	FileID    string `json:"fileId"`
+	SessionID string `json:"session_id"`
+	FileID    string `json:"file_id"`
 }
 
 func (c *Controller) commandLoad(w http.ResponseWriter, r *http.Request) (int, error) {
@@ -140,8 +144,18 @@ func (c *Controller) commandLoad(w http.ResponseWriter, r *http.Request) (int, e
 		fmt.Printf("%+v", req)
 		return http.StatusBadRequest, terror.New(errors.New("session id or file id not provided"), "")
 	}
+
+	payload := &messages.PayloadLoadFile{
+		ID:  req.FileID,
+		URL: fmt.Sprintf("%s/api/gcodes/download?file_id=%s", c.Host, req.FileID),
+	}
+
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return http.StatusBadRequest, terror.New(err, "")
+	}
 	chs := c.Sessions[req.SessionID]
-	chs.Agent <- &messages.AsyncCommand{RequestID: uuid.Must(uuid.NewV4()).String(), MessageType: messages.TypeCommand, RequestType: messages.CommandLoad}
+	chs.Agent <- &messages.AsyncCommand{RequestID: uuid.Must(uuid.NewV4()).String(), MessageType: messages.TypeCommand, RequestType: messages.CommandLoad, Payload: b}
 
 	w.Write([]byte("OK"))
 	return http.StatusOK, nil
@@ -152,8 +166,24 @@ type SessionRequest struct {
 	SessionID string `json:"sessionId"`
 }
 
+// StartRequest tells printer to start printing
+type StartRequest struct {
+	SessionID string `json:"sessionId"`
+	FileID    string `json:"fileId"`
+}
+
 func (c *Controller) commandStart(w http.ResponseWriter, r *http.Request) (int, error) {
-	// c.AsyncCh <- &messages.AsyncCommand{RequestID: uuid.Must(uuid.NewV4()).String(), Type: messages.CommandPrint}
+	req := &SessionRequest{}
+	err := json.NewDecoder(r.Body).Decode(req)
+	if err != nil {
+		return http.StatusBadRequest, terror.New(err, "")
+	}
+	if req.SessionID == "" {
+		fmt.Printf("%+v", req)
+		return http.StatusBadRequest, terror.New(errors.New("session id or file id not provided"), "")
+	}
+	chs := c.Sessions[req.SessionID]
+	chs.Agent <- &messages.AsyncCommand{RequestID: uuid.Must(uuid.NewV4()).String(), MessageType: messages.TypeCommand, RequestType: messages.CommandStart}
 	return http.StatusOK, nil
 }
 func (c *Controller) commandPause(w http.ResponseWriter, r *http.Request) (int, error) {
@@ -180,7 +210,27 @@ func (c *Controller) gcodesList(w http.ResponseWriter, r *http.Request) (int, er
 	}
 	return http.StatusOK, nil
 }
+func (c *Controller) gcodesDownload(w http.ResponseWriter, r *http.Request) (int, error) {
+	fileID := r.URL.Query().Get("file_id")
+	if fileID == "" {
+		return http.StatusBadRequest, terror.New(errors.New("no file_id"), "")
+	}
+	gc, err := db.FindGcodeG(fileID)
+	if err != nil {
+		return http.StatusBadRequest, terror.New(err, "")
+	}
+	blob, err := db.FindBlobG(gc.BlobID)
+	if err != nil {
+		return http.StatusBadRequest, terror.New(err, "")
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.html"`, gc.Name))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.Itoa(len(blob.Data)))
+	w.Write(blob.Data)
+	return http.StatusOK, nil
+}
 func (c *Controller) gcodesUpload(w http.ResponseWriter, r *http.Request) (int, error) {
+
 	err := r.ParseMultipartForm(32 << 20) // maxMemory 32MB
 	if err != nil {
 		return http.StatusBadRequest, terror.New(err, "failed to parse multipart message")
@@ -248,6 +298,7 @@ func (c *Controller) websocketHandler(w http.ResponseWriter, r *http.Request) (i
 				fmt.Println(err)
 				continue
 			}
+			// fmt.Println(string(result.Payload))
 			agentInfo := &messages.AgentInfo{}
 			err = json.Unmarshal(result.Payload, agentInfo)
 			if err != nil {
@@ -262,12 +313,7 @@ func (c *Controller) websocketHandler(w http.ResponseWriter, r *http.Request) (i
 		select {
 		case msg := <-agentChan:
 			// Handle messages to be forwarded to Agent
-			fmt.Println("received message:", msg)
-			b, err := json.Marshal(msg)
-			if err != nil {
-				return http.StatusBadRequest, terror.New(err, "")
-			}
-			err = writeTimeout(r.Context(), 100*time.Second, wsconn, b)
+			err = writeTimeout(r.Context(), 100*time.Second, wsconn, msg)
 			if err != nil {
 				return http.StatusBadRequest, terror.New(err, "")
 			}
@@ -275,11 +321,11 @@ func (c *Controller) websocketHandler(w http.ResponseWriter, r *http.Request) (i
 	}
 }
 
-func writeTimeout(ctx context.Context, timeout time.Duration, c *websocket.Conn, b []byte) error {
+func writeTimeout(ctx context.Context, timeout time.Duration, c *websocket.Conn, v interface{}) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	return wsjson.Write(ctx, c, b)
+	return wsjson.Write(ctx, c, v)
 }
 
 // LevelBedTest will send level bed command
