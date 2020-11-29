@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go-3dprint/messages"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gofrs/uuid"
 	"github.com/ninja-software/terror"
 	"go.bug.st/serial"
 	"go.uber.org/zap"
@@ -25,30 +27,34 @@ func init() {
 	log = logger.Sugar()
 }
 
-// New agent
-func New(ctx context.Context, serialConn serial.Port, wsConn *websocket.Conn, wshost, wsport string) (*Agent, error) {
-	a := &Agent{
-		wsConn,
-		serialConn,
-		false,
-		&sync.Mutex{},
-		wshost,
-		wsport,
-	}
-	return a, nil
-}
-
+// Agent holds state of the printer
 type Agent struct {
 	Conn   *websocket.Conn
 	Serial serial.Port
-	Busy   bool // No print commands allowed
+	Busy   bool                 // No print commands allowed
+	Status messages.AgentStatus // What printer is currently doing
 	*sync.Mutex
 	WebsocketHost string
 	WebsocketPort string
 }
 
+// New agent
+func New(ctx context.Context, serialConn serial.Port, wsConn *websocket.Conn, wshost, wsport string) *Agent {
+	a := &Agent{
+		wsConn,
+		serialConn,
+		false,
+		messages.StatusIdle,
+		&sync.Mutex{},
+		wshost,
+		wsport,
+	}
+	return a
+}
+
+// Reconnect creates a new conn to websocket
 func (a *Agent) Reconnect(ctx context.Context) error {
-	wsconn, _, err := websocket.Dial(ctx, fmt.Sprintf("ws://%s:%s", a.WebsocketHost, a.WebsocketPort), nil)
+	wsconn, _, err := websocket.Dial(ctx, fmt.Sprintf("ws://%s:%s/api/websocket", a.WebsocketHost, a.WebsocketPort), nil)
 	if err != nil {
 		return err
 	}
@@ -57,22 +63,57 @@ func (a *Agent) Reconnect(ctx context.Context) error {
 }
 
 // Subscribe to messages from the server
-func (a *Agent) Subscribe(ctx context.Context) error {
-	for {
-		time.Sleep(500 * time.Millisecond)
-		result := &messages.AsyncCommand{}
-		err := wsjson.Read(ctx, a.Conn, result)
-		if err != nil {
-			terror.Echo(err)
-			log.Info("reconnecting...")
-			err = a.Reconnect(ctx)
+func (a *Agent) Subscribe(ctx context.Context) {
+	// Send agent info to server
+	go func() {
+		for {
+			time.Sleep(1 * time.Second)
+			msg := &messages.AsyncCommand{
+				RequestID:   uuid.Must(uuid.NewV4()).String(),
+				MessageType: messages.TypeInfo,
+				RequestType: messages.InfoAgentStatus,
+				Payload:     nil,
+			}
+			b, err := json.Marshal(&messages.AgentInfo{Busy: a.Busy, Status: a.Status})
+			if err != nil {
+				terror.Echo(err)
+				continue
+			}
+			msg.Payload = b
+			err = wsjson.Write(ctx, a.Conn, msg)
 			if err != nil {
 				terror.Echo(err)
 				continue
 			}
 		}
-		log.Info("RECV:", result)
-		go a.ProcessMessage(result)
+	}()
+	for {
+		time.Sleep(500 * time.Millisecond)
+		result := &messages.AsyncCommand{}
+		err := wsjson.Read(ctx, a.Conn, result)
+		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+			fmt.Println("websocket closed")
+			continue
+		}
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		fmt.Println(result)
+
+		// result := &messages.AsyncCommand{}
+		// err := wsjson.Read(ctx, a.Conn, result)
+		// if err != nil {
+		// 	terror.Echo(err)
+		// 	log.Info("reconnecting...")
+		// 	err = a.Reconnect(ctx)
+		// 	if err != nil {
+		// 		terror.Echo(err)
+		// 		continue
+		// 	}
+		// }
+		// log.Info("RECV:", result)
+		// go a.ProcessMessage(result)
 	}
 }
 
@@ -91,21 +132,21 @@ func (a *Agent) ProcessMessage(result *messages.AsyncCommand) {
 		a.Unlock()
 	}()
 
-	if result.Type == messages.LevelBedTest {
+	if result.RequestType == messages.CommandLevelBedTest {
 		err := a.Print(ctx, strings.NewReader(GCodeLevelBedTest))
 		if err != nil {
 			terror.Echo(err)
 			return
 		}
 	}
-	if result.Type == messages.AutoHome {
+	if result.RequestType == messages.CommandAutoHome {
 		err := a.Print(ctx, strings.NewReader(GCodeAutoHome))
 		if err != nil {
 			terror.Echo(err)
 			return
 		}
 	}
-	if result.Type == messages.UnlockPrinter {
+	if result.RequestType == messages.CommandUnlockPrinter {
 		a.Busy = false
 	}
 }

@@ -3,8 +3,9 @@ cmd = "go build -o ./tmp/main ."
 # Binary file yields from `cmd`.
 bin = "tmp/main"
 # Customize binary.
-full_bin = "./tmp/main dev --addr :8080 --websocket-host localhost --websocket-port 8080 --serial-device /dev/ttyS3"
-exclude_dir = ["assets", "tmp", "vendor", "web/node_modules", "bin"]
+full_bin = "./tmp/main dev --addr :8080 --websocket_host localhost --websocket_port 8080 --serial_device /dev/ttyS3"
+#full_bin = "./tmp/main serve --addr :8080"
+exclude_dir = ["assets", "tmp", "vendor", "web", "bin"]
 # Watch these filename extensions.
 include_ext = ["go", "tpl", "tmpl", "html"]
 # Stop running old binary when build errors occur.

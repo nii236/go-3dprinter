@@ -6,6 +6,7 @@ import (
 	"github.com/ninja-software/terror"
 )
 
+// WithError handles http errors in one spot
 func WithError(next func(w http.ResponseWriter, r *http.Request) (int, error)) func(w http.ResponseWriter, r *http.Request) {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		code, err := next(w, r)
